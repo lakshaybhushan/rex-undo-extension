@@ -158,7 +158,12 @@ local function command_line(pid)
       renamed = true
       for k = 2, #raw do if raw[k] ~= "" then renamed = false end end
     end
-    if renamed then return raw[1] end
+    if renamed then
+      -- npm's title keeps only positional words and drops the `--` before them,
+      -- so its first word starting with "-" came after a `--`. Put it back.
+      if raw[1]:match("^npm ") then return (raw[1]:gsub(" %-", " -- -", 1)) end
+      return raw[1]
+    end
     local words = {}
     for k, w in ipairs(raw) do
       local q = shquote(w)

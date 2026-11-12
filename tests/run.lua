@@ -363,6 +363,17 @@ test("a program that renamed itself reruns by its title", function()
   assert(input == "npm run dev\n", "got " .. tostring(input))
 end)
 
+test("npm gets back the -- its title dropped", function()
+  -- `npm run dev -- -H localhost` titles itself `npm run dev -H localhost`.
+  local p = io.popen([[perl -e '$0 = "npm run dev -H localhost"; sleep 20' & echo $!]])
+  local pid = tonumber(p:read("*l")); p:close()
+  os.execute("sleep 0.3")
+  local ok, input = pcall(closed_terminal_input, { pid = pid, name = "perl", argv0 = "perl" })
+  os.execute("kill " .. pid)
+  assert(ok, input)
+  assert(input == "npm run dev -- -H localhost\n", "got " .. tostring(input))
+end)
+
 test("a program that only shares an agent's name reruns as itself", function()
   local function input(fg, app)
     lib.clear()
