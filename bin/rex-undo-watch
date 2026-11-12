@@ -1,0 +1,37 @@
+#!/bin/sh
+# Keeps the rex-undo watcher running while the Rex server is up. init.lua
+# starts this each time the config loads; a second copy exits at once.
+
+dir=${REX_UNDO_DIR:-$(cd "$(dirname "$0")/../rex-undo" && pwd)}
+rex=${REX_UNDO_REX:-rex}
+state=${XDG_STATE_HOME:-$HOME/.local/state}/rex-undo
+pidfile=$state/watcher.pid
+log=$state/watcher.log
+
+mkdir -p "$state" || exit 1
+# A kernel lock, freed when its holder dies, so of two copies one exits. A
+# pidfile check can't do this: two copies can both find a stale one and both run.
+if [ -z "${REX_UNDO_LOCKED:-}" ]; then
+  # A copy from before the lock existed holds none, so check its pidfile too.
+  running=$(cat "$pidfile" 2>/dev/null || true)
+  if [ -n "$running" ] && ps -o command= -p "$running" 2>/dev/null | grep -q rex-undo-watch; then
+    exit 0
+  fi
+  REX_UNDO_LOCKED=1 exec lockf -s -t 0 "$state/watcher.lock" /bin/sh "$0" "$@"
+fi
+# For uninstall.sh, which stops this process by its pid.
+echo $$ >"$pidfile"
+trap 'rm -f "$pidfile"' EXIT
+trap 'exit 0' INT TERM HUP
+
+[ -f "$log" ] && [ "$(wc -c <"$log")" -gt 1000000 ] && : >"$log"
+exec >>"$log" 2>&1 </dev/null
+
+# Give up after a minute without a server; the next config load starts this again.
+fails=0
+while [ "$fails" -lt 30 ]; do
+  started=$(date +%s)
+  REX_UNDO_DIR=$dir "$rex" --autostart=false do "$dir/watcher.lua" --all
+  if [ $(($(date +%s) - started)) -gt 10 ]; then fails=0; else fails=$((fails + 1)); fi
+  sleep 2
+done

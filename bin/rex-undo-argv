@@ -1,0 +1,15 @@
+#!/usr/bin/perl
+# Prints a process's argv, NUL-separated. `ps` joins argv with spaces, which
+# loses quoting; the kernel's KERN_PROCARGS2 keeps each word. macOS only.
+use strict;
+my $pid = shift;
+$pid =~ /^\d+$/ or exit 1;
+my $len = 262144; my $buf = "\0" x $len; my $lenp = pack("Q", $len);
+# sysctl(2) is syscall 202; CTL_KERN = 1, KERN_PROCARGS2 = 49.
+syscall(202, pack("i3", 1, 49, $pid), 3, $buf, $lenp, 0, 0) == 0 or exit 1;
+$buf = substr($buf, 0, unpack("Q", $lenp));
+# argc, then the executable path and its NUL padding, then argv.
+my $argc = unpack("i", $buf);
+$buf =~ s/^.{4}[^\0]*\0+//s or exit 1;
+my @a = split /\0/, $buf, $argc + 1;
+print join("\0", @a[0 .. $argc - 1]);
