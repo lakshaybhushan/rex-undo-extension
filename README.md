@@ -120,3 +120,11 @@ the tests cover.
 `uninstall.sh` stops the watcher, removes the block and the hook, and deletes
 `~/.local/state/rex-undo`, since the history holds command lines as they were typed. To
 update rex-undo, run `./install.sh` again instead; it keeps the history.
+
+## Contributing
+
+Issues and pull requests are welcome. Run `sh tests/run.sh` before sending a change.
+
+## License
+
+MIT. See [LICENSE](LICENSE).
