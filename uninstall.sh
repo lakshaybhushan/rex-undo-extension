@@ -7,6 +7,7 @@ set -eu
 root=$(cd "$(dirname "$0")" && pwd)
 . "$root/lib/ui.sh"
 . "$root/lib/watcher.sh"
+. "$root/lib/files.sh"
 config=${XDG_CONFIG_HOME:-$HOME/.config}/rex/init.lua
 settings=$HOME/.claude/settings.json
 state=${XDG_STATE_HOME:-$HOME/.local/state}/rex-undo
@@ -17,7 +18,7 @@ if watcher_stop "$state"; then stopped=1; fi
 
 # Both markers must be there, or sed would delete to the end of the file.
 if [ -f "$config" ] && grep -qx -- '-- rex-undo begin' "$config" && grep -qx -- '-- rex-undo end' "$config"; then
-  sed -i '' '/^-- rex-undo begin$/,/^-- rex-undo end$/d' "$config"
+  remove_block "$config"
   unconfigured=1
 elif [ -f "$config" ] && grep -q -- '-- rex-undo' "$config"; then
   config_warning="Left $(ui_path "$config") alone: it has a partial rex-undo block. Delete it by hand."
@@ -26,7 +27,7 @@ fi
 if [ -f "$settings" ] && grep -q 'claude-session-start.sh' "$settings"; then
   if command -v jq >/dev/null 2>&1 && jq '.hooks.SessionStart |= map(select((.hooks // []) | all((.command // "") | test("claude-session-start\\.sh") | not)))' \
     "$settings" >"$settings.tmp" 2>/dev/null; then
-    mv "$settings.tmp" "$settings"
+    replace_file "$settings"
     unhooked=1
   else
     rm -f "$settings.tmp"

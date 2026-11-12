@@ -62,6 +62,16 @@ test("a session that is gone is still recorded", function()
   assert(#s == 1 and s[1].kind == "session", "expected a session entry")
 end)
 
+test("the watcher marks a close as settling until it's recorded", function()
+  start_watcher({ "block:a", "block:b" })
+  mock.handlers.block_closed({ session_id = SID }, {})
+  assert(lib.exists(lib.settling_path), "no settling marker while the close is pending")
+  mock.views[SID] = view({ "block:a" })
+  mock.run_timers()
+  assert(not lib.exists(lib.settling_path), "the marker outlived the close")
+  assert(#lib.read_stack() == 1, "the close wasn't recorded")
+end)
+
 test("a failed session list doesn't record the live session as closed", function()
   start_watcher({ "block:a", "block:b" })
   mock.handlers.block_closed({ session_id = SID }, {})
@@ -142,6 +152,18 @@ local function pane_entry(sid, wid)
     panes = { { block_id = "block:a", block = {}, placement = {} } } }
 end
 
+test("an undo right after a close waits for it and reopens it", function()
+  local undo = load_undo()
+  mock.sessions[SID] = true
+  lib.push(pane_entry(SID, "window:1")) -- the close before
+  local f = io.open(lib.settling_path, "w"); f:write(tostring(os.time())); f:close()
+  -- The watcher records the new close 0.3s later, then clears the marker.
+  os.execute(string.format("(sleep 0.3; luajit %s/tests/push_many.lua %s new 1; rm -f %s) &", root, root, lib.settling_path))
+  local r = undo.undo({})
+  assert(r.message == "Couldn't reopen new1", "took the close before: " .. tostring(r.message or r.summary))
+  assert(#lib.read_stack() == 1, "expected the close before still there")
+end)
+
 test("pressing again moves further back and ends at nothing to reopen", function()
   local undo = load_undo()
   fake_creates()
@@ -203,6 +225,29 @@ test("a failed lookup reopens nothing and keeps the entry", function()
   assert(#made == 0, "created " .. tostring(made[1]))
   assert(#lib.read_stack() == 1, "the entry was dropped")
   assert(next(lib.read_remap()) == nil, "wrote a remap")
+end)
+
+test("a pane whose folder is gone comes back as a shell, without its command", function()
+  local undo = load_undo()
+  local sent = {}
+  mock.on_call = function(method, args)
+    if method == "session.new_split" then
+      sent[#sent + 1] = args.layout.block.options
+      return { block_ids = { "block:n" } }
+    end
+    return {}
+  end
+  mock.sessions[SID] = true
+  mock.views[SID] = view({ "block:b" })
+  local e = pane_entry(SID, "window:1")
+  e.panes[1].block = { options = { cwd = "/no/such/worktree", initial_input = "rm -rf build\n" } }
+  lib.push(e)
+  e = pane_entry(SID, "window:1")
+  e.panes[1].block = { options = { cwd = root, initial_input = "make\n" } }
+  lib.push(e)
+  assert(undo.undo({}).restored and undo.undo({}).restored, "didn't reopen both")
+  assert(sent[1].initial_input == "make\n", "dropped the command of a pane whose folder exists")
+  assert(sent[2].initial_input == nil, "reran " .. tostring(sent[2].initial_input) .. " without its folder")
 end)
 
 test("a session entry for a session that's still open isn't copied", function()
@@ -267,7 +312,8 @@ end)
 
 -- One terminal pane, block:t, running `fg`, beside a second pane; close block:t
 -- and return the command its entry would type.
-local function closed_terminal_input(fg)
+-- `app` is what the program reported to Rex as, if anything.
+local function closed_terminal_input(fg, app)
   local T = "com.superlogical.terminal"
   local function tview(ids)
     local v = view(ids)
@@ -278,6 +324,9 @@ local function closed_terminal_input(fg)
   end
   mock.block_call = function(_, method)
     if method == "process" then return { foreground = fg } end
+    if method == "program_status" and app then
+      return { records = { { owner = { pid = fg.pid }, effective_app = app } } }
+    end
   end
   start_watcher(nil, tview({ "block:t", "block:b" }))
   mock.handlers.block_closed({ session_id = SID }, {})
@@ -312,6 +361,22 @@ test("a program that renamed itself reruns by its title", function()
   os.execute("kill " .. pid)
   assert(ok, input)
   assert(input == "npm run dev\n", "got " .. tostring(input))
+end)
+
+test("a program that only shares an agent's name reruns as itself", function()
+  local function input(fg, app)
+    lib.clear()
+    fg.pid = 999999
+    return closed_terminal_input(fg, app)
+  end
+  local got = input({ name = "fx", argv0 = "fx" })
+  assert(got == "fx\n", "fx the JSON viewer came back as " .. tostring(got))
+  got = input({ name = "fx", argv0 = "fx" }, "fx")
+  assert(got == "fx -c\n", "fx the agent, reported to Rex, came back as " .. tostring(got))
+  got = input({ name = "python3", argv0 = "python3", script = "/Users/x/project/claude.py" })
+  assert(got == "python3\n", "a script named claude.py came back as " .. tostring(got))
+  got = input({ name = "node", argv0 = "node", script = "/opt/homebrew/lib/node_modules/@openai/codex/bin/codex.js" })
+  assert(got == "codex resume --last\n", "installed codex came back as " .. tostring(got))
 end)
 
 test("a Claude hook record from another process isn't used", function()
@@ -391,7 +456,10 @@ test("clear empties the history and says how much it forgot", function()
   lib.push(pane_entry(SID, "window:1"))
   lib.push(pane_entry(SID, "window:1"))
   lib.write_remap({ ["block:a"] = "block:b" })
+  local log = io.open(lib.state_dir .. "/watcher.log", "w"); log:write("recorded pane in s: curl -H 'Authorization: x'\n"); log:close()
   assert(undo.clear() == "Cleared 2 closed items", "wrong count")
+  log = io.open(lib.state_dir .. "/watcher.log"); local text = log:read("*a"); log:close()
+  assert(text == "", "the log still has the command lines")
   assert(#lib.read_stack() == 0, "the history is still there")
   assert(next(lib.read_remap()) == nil, "the ID map is still there")
   assert(undo.history() == "Nothing to reopen", "history still lists entries")

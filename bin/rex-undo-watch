@@ -8,7 +8,10 @@ state=${XDG_STATE_HOME:-$HOME/.local/state}/rex-undo
 pidfile=$state/watcher.pid
 log=$state/watcher.log
 
+# The log and the history hold command lines as typed: keep them to this user.
+umask 077
 mkdir -p "$state" || exit 1
+chmod 600 "$log" 2>/dev/null || true
 # A kernel lock, freed when its holder dies, so of two copies one exits. A
 # pidfile check can't do this: two copies can both find a stale one and both run.
 if [ -z "${REX_UNDO_LOCKED:-}" ]; then

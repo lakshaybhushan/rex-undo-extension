@@ -8,6 +8,7 @@ M.claude_dir = M.state_dir .. "/claude"
 M.stack_path = M.state_dir .. "/stack.jsonl"
 M.old_stack_path = M.state_dir .. "/stack.json" -- one JSON array, before 2026-11
 M.remap_path = M.state_dir .. "/remap.json"
+M.settling_path = M.state_dir .. "/settling" -- there while the watcher settles a close
 M.max_entries = 50 -- unless settings.json, written by undo.lua's setup, says otherwise
 M.settings_path = M.state_dir .. "/settings.json"
 M.remap_max = 100
@@ -101,7 +102,7 @@ function M.locked(fn)
   while true do
     local r = rex.exec({ "mkdir", M.lock_path })
     if r and r.ok then break end
-    -- The folder may not exist yet (first use, or after --purge). Checking
+    -- The folder may not exist yet (first use, or after uninstall). Checking
     -- only here saves a process start on every change.
     if not made then
       made = true
@@ -163,6 +164,10 @@ function M.clear()
     local n = #line_ends(read_text())
     write_text("")
     M.write_raw(M.remap_path, "{}")
+    -- The log names each close with its command line. The watcher appends
+    -- (>>), so emptying it in place is safe while it runs.
+    local log = io.open(M.state_dir .. "/watcher.log", "w")
+    if log then log:close() end
     return n
   end)
 end

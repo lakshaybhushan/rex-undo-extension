@@ -6,6 +6,7 @@ set -eu
 root=$(cd "$(dirname "$0")" && pwd)
 . "$root/lib/ui.sh"
 . "$root/lib/watcher.sh"
+. "$root/lib/files.sh"
 config=${XDG_CONFIG_HOME:-$HOME/.config}/rex/init.lua
 settings=$HOME/.claude/settings.json
 state=${XDG_STATE_HOME:-$HOME/.local/state}/rex-undo
@@ -38,7 +39,7 @@ mkdir -p "$(dirname "$config")"
 # Replace an earlier block, which may point at a folder from another install or Mac.
 verb=Installed
 if [ -f "$config" ] && grep -qx -- '-- rex-undo begin' "$config" && grep -qx -- '-- rex-undo end' "$config"; then
-  sed -i '' '/^-- rex-undo begin$/,/^-- rex-undo end$/d' "$config"
+  remove_block "$config"
   verb=Updated
 elif [ -f "$config" ] && grep -q -- '-- rex-undo' "$config"; then
   ui_err "Can't update $(ui_path "$config"): it has a partial rex-undo block."
@@ -71,7 +72,7 @@ if command -v jq >/dev/null 2>&1; then
   # Drop any earlier rex-undo hook, then add this folder's.
   if jq --arg cmd "$hook" '.hooks.SessionStart = (((.hooks.SessionStart // []) | map(select((.hooks // []) | all((.command // "") | test("claude-session-start\\.sh") | not)))) + [{hooks: [{type: "command", command: $cmd, timeout: 5}]}])' \
     "$settings.rex-undo.bak" >"$settings.tmp" 2>/dev/null; then
-    mv "$settings.tmp" "$settings"
+    replace_file "$settings"
     hook_ok=1
   else
     rm -f "$settings.tmp"

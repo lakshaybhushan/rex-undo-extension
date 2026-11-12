@@ -59,7 +59,15 @@ per copy.
 
 Invariants: a `session` entry means the session no longer exists. While
 Settling, the snapshot is the layout before the close. A block is recorded
-once: after recording, the snapshot is the view it was compared with.
+once: after recording, the snapshot is the view it was compared with. While
+any session is Settling, the `settling` file holds the time; undo waits up to
+~1.5s for it to go (ignoring one older than 3s), then pops.
+
+- **Fixed (medium): an undo right after a close reopened the close before.**
+  A close reaches the history only after it settles (0.4s, more when the
+  watcher is busy), so a quick undo took the entry below it. Tests: "the
+  watcher marks a close as settling until it's recorded", "an undo right after
+  a close waits for it and reopens it".
 
 - **Fixed (medium): live session recorded as closed.** `rex.session.view`
   returns `nil` on any error, including a timeout, and `finalize` treated `nil`
@@ -89,7 +97,7 @@ once: after recording, the snapshot is the view it was compared with.
 | --- | --- |
 | Shell | `fg` nil or a shell (no `script`) |
 | Program | `fg` is non-shell, with `args` from `ps` |
-| Agent | Program matched in `agents.lua`, with `session_id` from the hook record → `lsof` → `query`, or none |
+| Agent | Program matched in `agents.lua`, with `session_id` from the hook record → `lsof` → `query`, or none. A match by script name (`node codex.js`) needs an installed script (no extension, or under `node_modules`/`site-packages`); an agent marked `confirm` (fx, amp, goose, pi) needs its app reported to Rex or a session ID. Otherwise it stays Program |
 | JustExited | `fg` is a shell, `prev_fg` is an agent, `fg_at` ≤ 3s ago |
 
 Transitions come from `process_changed`, `title_changed`,
@@ -100,6 +108,12 @@ At close time, `block_spec` maps Shell → plain shell, Program → its argv,
 Agent → `resume {id}` / argv naming a session / `continue`, and JustExited →
 the previous agent.
 
+- **Fixed (medium): a program with an agent's name reopened as the agent.**
+  `fx data.json` (the JSON viewer) came back as `fx -c`, `amp main.rs` (the
+  editor) as `amp threads continue`, and `python3 claude.py` as `claude
+  --continue`. Script names now count only for installed scripts, and names
+  marked `confirm` need the agent to report itself to Rex or a session ID.
+  Test: "a program that only shares an agent's name reruns as itself".
 - **Fixed (low): commands rerun without their quoting.** `args` came from
   `ps -o args=`, which joins argv with spaces, so `grep "a b" f` reran as
   `grep a b f`. It now comes from the kernel (`bin/rex-undo-argv`, via
@@ -138,7 +152,7 @@ there's no current session (for example `rex do undo_close` with none).
 | Recorded | top of `stack.jsonl` |
 | InFlight | popped by `undo_close`, not in the file |
 | Restored | gone from the stack; old → new IDs in `remap.json` |
-| Dropped | restore failed; gone, logged, named in the result's `skipped` / message |
+| Dropped | restore failed; gone, logged by kind, named in the result's message |
 | Evicted | pushed past 50 entries; dropped |
 
 | From | Event | To |
@@ -213,6 +227,16 @@ removed on the first write.
   old (a holder takes milliseconds), and gives up with an error after 10s.
   A holder stalled for over 5s can still lose it. Test: "a lock in use is
   waited for, and a stale one is taken over".
+- **Fixed (high): a command reran in `~` when its folder was gone.** Rex opens
+  a pane whose folder doesn't exist in the home folder, so a removed worktree's
+  `rm -rf build` or `make clean` would run there. A pane whose folder is gone
+  now comes back as a plain shell. Test: "a pane whose folder is gone comes
+  back as a shell, without its command".
+- **Fixed (medium): `undo_clear` left command lines behind.** `watcher.log`
+  (mode 0644) names each close with its command line, and a dropped entry's
+  summary went to Rex's log. `undo_clear` now empties `watcher.log`, the
+  supervisor keeps its files to the user (`umask 077`), and Rex's log gets
+  only the entry's kind. Test: "clear empties the history …".
 - **Fixed (high): a short write emptied the history.** `write_raw` didn't
   check the write, so on a full disk a cut-off `stack.jsonl` replaced the good
   one, read back as empty, and the next push left one entry. Test: "a short
@@ -244,6 +268,11 @@ supervisor before it reloads the config, so the reload starts one on the new
 code, and reports whether it did. `uninstall.sh` stops it, removes the block
 and hook, and deletes the state folder (history, remap, Claude records, log).
 
+- **Fixed (medium): a symlinked `init.lua` or `settings.json` broke install
+  and uninstall.** BSD `sed -i` refuses a symlink, so a dotfiles setup made a
+  reinstall fail and uninstall abort after it had stopped the watcher; `mv`
+  replaced a linked `settings.json` with a plain file. Both now write through
+  the link (`lib/files.sh`). Test: `tests/install_test.sh`.
 - **Fixed (medium): a reinstall or update kept the old watcher.** The new
   supervisor found the lock held and exited, so the old code kept running,
   and after a move it ran a path that no longer existed, failed 30 times, and

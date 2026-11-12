@@ -237,6 +237,18 @@ local function restore_panes(map, e)
   return sid, wid
 end
 
+-- A pane whose folder is gone (a removed worktree, a path from an ssh session)
+-- would open in ~ and rerun its command there, such as `rm -rf build`. It
+-- comes back as a plain shell instead.
+local function skip_missing_folders(v)
+  if type(v) ~= "table" then return end
+  local o = v.options
+  if type(o) == "table" and o.initial_input and o.cwd and not lib.exists(o.cwd) then
+    o.initial_input = nil
+  end
+  for _, x in pairs(v) do skip_missing_folders(x) end
+end
+
 local restorers = {
   session = restore_session,
   window = restore_window,
@@ -247,13 +259,29 @@ local restorers = {
 -- the history and reopens it. One that can't come back is dropped and the
 -- press ends there, so pressing again moves further back and ends at "Nothing
 -- to reopen", and a failure that hits every entry costs one, not the history.
+-- A close the watcher is still settling isn't in the history yet. Wait for it
+-- (up to ~1.5s), so an undo right after a close reopens that close.
+local function wait_for_settling()
+  for _ = 1, 30 do
+    local f = io.open(lib.settling_path, "r")
+    if not f then return end
+    local t = tonumber(f:read("*a"))
+    f:close()
+    -- Older than 3s: left by a watcher that stopped mid-close.
+    if not t or os.time() - t > 3 then return end
+    rex.exec({ "sleep", "0.05" })
+  end
+end
+
 function M.undo(ctx)
   attached = {}
   here = ctx and ctx.session_id
+  wait_for_settling()
   local entry = lib.pop()
   if not entry then return { restored = false, message = "Nothing to reopen" } end
   local map = lib.read_remap()
   local restore = restorers[entry.kind]
+  skip_missing_folders(entry)
   created = 0
   local ok, sid, wid = true, nil, "unknown entry kind " .. tostring(entry.kind)
   if restore then ok, sid, wid = pcall(restore, map, entry) end
@@ -273,7 +301,9 @@ function M.undo(ctx)
     lib.push(entry)
     return { restored = false, message = "Rex didn't answer, so nothing was reopened. Try again." }
   end
-  rex.log("rex-undo: dropped " .. name .. ": " .. tostring(wid))
+  -- The kind, not the summary: the summary has the command line, and Rex's
+  -- log is something undo_clear can't empty.
+  rex.log("rex-undo: couldn't reopen a closed " .. tostring(entry.kind) .. ": " .. tostring(wid))
   return { restored = false, message = "Couldn't reopen " .. name }
 end
 

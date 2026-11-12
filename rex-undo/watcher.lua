@@ -60,21 +60,39 @@ local function shquote(s)
   return "'" .. s:gsub("'", "'\\''") .. "'"
 end
 
-local function find_agent(p)
+-- An installed agent's script is a launcher with no extension or sits in a
+-- package folder. `python3 claude.py` or `node ./bin/claude.js` is a script of
+-- your own that shares an agent's name.
+local function installed(path)
+  return not base(path):find(".", 1, true) or path:find("/node_modules/", 1, true) ~= nil
+    or path:find("/site-packages/", 1, true) ~= nil
+end
+
+-- The agent the program is. Its name alone isn't enough for a script of your
+-- own, or for an agent marked `confirm` because another tool has its name
+-- (fx the JSON viewer): those also need the program to have reported itself
+-- to Rex as that agent, or a session ID found for it. `lenient` takes the name
+-- alone, to look up that session ID.
+local function find_agent(p, lenient)
   if not p then return nil end
-  local keys = { stem(p.name), stem(p.argv0), stem(p.invoked_path) }
-  if p.script then keys[#keys + 1] = stem(p.script) end
+  local names = { stem(p.name), stem(p.argv0), stem(p.invoked_path) }
+  local scripts = {}
+  if p.script then scripts[#scripts + 1] = p.script end
   -- An interpreter's first argument, as in `node /path/to/gemini.js`.
   local first, second = (p.args or ""):match("^(%S+)%s+(%S+)")
-  if first and INTERPRETERS[stem(first)] then keys[#keys + 1] = stem(second) end
+  if first and INTERPRETERS[stem(first)] then scripts[#scripts + 1] = second end
+  local proven = lenient or p.session_id ~= nil
   for _, a in ipairs(agents) do
-    for _, n in ipairs(a.names or {}) do
-      for _, k in ipairs(keys) do
-        if k == n then return a end
-      end
-    end
     for _, n in ipairs(a.apps or {}) do
       if p.app and p.app:lower() == n then return a end
+    end
+    for _, n in ipairs(a.names or {}) do
+      for _, k in ipairs(names) do
+        if k == n and (proven or not a.confirm) then return a end
+      end
+      for _, s in ipairs(scripts) do
+        if stem(s) == n and (proven or (not a.confirm and installed(s))) then return a end
+      end
     end
   end
 end
@@ -194,8 +212,8 @@ local function enrich(sid, bid, info)
     if rec.owner and rec.owner.pid == fg.pid and rec.effective_app then fg.app = rec.effective_app end
   end
 
-  local a = find_agent(fg)
-  fg.agent = a and a.names[1] or nil
+  -- Lenient: the session ID found here is what proves a doubtful name.
+  local a = find_agent(fg, true)
   if not a then return end
   if a.hook then
     local rec = claude_record(bid, fg.pid)
@@ -449,7 +467,9 @@ local function record(entry)
   print(os.date("%H:%M:%S") .. " recorded " .. entry.summary)
 end
 
-local function finalize(sid)
+local finalize -- below; settle's retry calls it
+
+local function settle(sid)
   local c = closing[sid]
   closing[sid] = nil
   if not c then return end
@@ -553,6 +573,23 @@ local function finalize(sid)
   refresh(sid)
 end
 
+-- A close isn't in the history until it settles (SETTLE seconds, longer if
+-- the watcher is busy), so while one is pending a marker with the time tells
+-- undo to wait for it rather than reopen the close before.
+local function mark_settling()
+  if next(closing) then
+    pcall(lib.write_raw, lib.settling_path, tostring(os.time()))
+  else
+    os.remove(lib.settling_path)
+  end
+end
+
+function finalize(sid)
+  local ok, err = pcall(settle, sid)
+  mark_settling()
+  if not ok then error(err, 0) end
+end
+
 function on_close(sid, destroyed)
   if not sid then return end
   local c = closing[sid]
@@ -564,6 +601,7 @@ function on_close(sid, destroyed)
   if destroyed then c.destroyed = true end
   if c.timer then c.timer:cancel() end
   c.timer = rex.after(SETTLE, function() finalize(sid) end)
+  mark_settling()
 end
 
 -- Events -------------------------------------------------------------------------
@@ -607,6 +645,7 @@ end)
 -- API calls work once the script is attached, which is after this file runs.
 rex.after(0, function()
   lib.ensure_dirs()
+  os.remove(lib.settling_path) -- left by a copy that stopped mid-close
   rex.exec({ "find", lib.claude_dir, "-name", "*.json", "-mtime", "+14", "-delete" })
   scan(true)
   print(os.date("%H:%M:%S") .. " watching")

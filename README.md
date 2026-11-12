@@ -54,7 +54,8 @@ drops it and stops there; press again to go further back.
 
 The history keeps the last 50 closes, or `REX_UNDO_HISTORY`, with each command line as
 it was typed. That includes anything typed into one, such as a token in a `curl` header,
-so `undo_clear` deletes the history as well as the entries.
+so `undo_clear` empties both the history and the watcher's log, which names each close.
+Both files are readable only by you.
 
 ## How it works
 
@@ -85,7 +86,8 @@ as `claude --continue` or `codex resume --last`.
 `agents.lua` has 22 entries. The resume commands for claude, codex, fx, opencode, and
 copilot were checked against each tool's `--help`; the rest come from their documentation
 and weren't run here. A program that isn't listed is rerun with the command line it was
-started with.
+started with. So is a program that only shares an agent's name: a script of your own,
+such as `python3 claude.py`, or fx the JSON viewer and amp the editor.
 
 To add one, add an entry to `agents.lua`, then run `./install.sh` again so the watcher
 restarts with it.
@@ -96,6 +98,16 @@ restarts with it.
   scrollback.
 - Environment variables set on the command line, as in `FOO=1 make`, are lost.
 - A command reruns as it was, including one with side effects.
+- A pane whose folder no longer exists, such as a removed worktree, comes back as a plain
+  shell in `~`, without its command.
+- An agent resumes without the flags it was started with, such as `--model` or a
+  permission mode.
+- A command is typed into the new shell, so a tab or other control character in it can
+  come back changed, and a command kept out of shell history with a leading space goes
+  into history.
+- fx, amp, goose, and pi share their names with other tools, so one of them counts as
+  the agent only when it reports itself to Rex or rex-undo finds its session. Otherwise
+  its command reruns as typed, so such an agent can come back in a new session.
 - rex-undo records closes only while the watcher runs. Its log is
   `~/.local/state/rex-undo/watcher.log`.
 - The watcher keeps the code it started with. Run `./install.sh` after pulling changes,
@@ -107,7 +119,7 @@ restarts with it.
 sh tests/run.sh
 ```
 
-The tests run against a temporary state directory and need `luajit`.
+The tests run against a temporary state directory and home, and need `luajit` and `jq`.
 [`STATE_MACHINES.md`](STATE_MACHINES.md) records the state each part keeps and the bugs
 the tests cover.
 
