@@ -313,7 +313,7 @@ end)
 -- One terminal pane, block:t, running `fg`, beside a second pane; close block:t
 -- and return the command its entry would type.
 -- `app` is what the program reported to Rex as, if anything.
-local function closed_terminal_input(fg, app)
+local function closed_terminal_input(fg, app, before_close)
   local T = "com.superlogical.terminal"
   local function tview(ids)
     local v = view(ids)
@@ -329,6 +329,7 @@ local function closed_terminal_input(fg, app)
     end
   end
   start_watcher(nil, tview({ "block:t", "block:b" }))
+  if before_close then before_close() end
   mock.handlers.block_closed({ session_id = SID }, {})
   mock.views[SID] = view({ "block:b" })
   mock.run_timers()
@@ -369,6 +370,19 @@ test("npm gets back the -- its title dropped", function()
   local pid = tonumber(p:read("*l")); p:close()
   os.execute("sleep 0.3")
   local ok, input = pcall(closed_terminal_input, { pid = pid, name = "perl", argv0 = "perl" })
+  os.execute("kill " .. pid)
+  assert(ok, input)
+  assert(input == "npm run dev -- -H localhost\n", "got " .. tostring(input))
+end)
+
+test("npm caught before it titles itself is read again", function()
+  -- npm is plain `npm` until it has loaded its config.
+  -- node, which npm runs on, since it blanks the rest of argv the way npm's title does.
+  local p = io.popen([[node -e 'process.title = "npm"; setTimeout(() => { process.title = "npm run dev -H localhost" }, 800); setTimeout(() => {}, 20000)' & echo $!]])
+  local pid = tonumber(p:read("*l")); p:close()
+  os.execute("sleep 0.4")
+  local ok, input = pcall(closed_terminal_input, { pid = pid, name = "node", argv0 = "node" }, nil,
+    function() os.execute("sleep 0.8") end)
   os.execute("kill " .. pid)
   assert(ok, input)
   assert(input == "npm run dev -- -H localhost\n", "got " .. tostring(input))

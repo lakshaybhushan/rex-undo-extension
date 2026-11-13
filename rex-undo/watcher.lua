@@ -212,6 +212,19 @@ local function enrich(sid, bid, info)
   local fg = info.fg
   if not fg or is_shell(fg) then return end
   if not fg.args then fg.args = command_line(fg.pid) end
+  -- npm titles itself plain `npm` while it starts, and `npm run dev` only once
+  -- it has read its config. Caught in between, look again until it has.
+  local tries = 0
+  local function recheck()
+    if fg.args ~= "npm" or tries >= 5 or info.fg ~= fg then return end
+    tries = tries + 1
+    rex.after(1, function()
+      if info.fg ~= fg then return end
+      fg.args = command_line(fg.pid) or fg.args
+      recheck()
+    end)
+  end
+  recheck()
   local st = rex.block.call(TERMINAL, "program_status", { session_id = sid, block_id = bid })
   for _, rec in ipairs((st and st.records) or {}) do
     if rec.owner and rec.owner.pid == fg.pid and rec.effective_app then fg.app = rec.effective_app end
