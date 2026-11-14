@@ -20,7 +20,11 @@ if [ -z "${REX_UNDO_LOCKED:-}" ]; then
   if [ -n "$running" ] && ps -o command= -p "$running" 2>/dev/null | grep -q rex-undo-watch; then
     exit 0
   fi
-  REX_UNDO_LOCKED=1 exec lockf -s -t 0 "$state/watcher.lock" /bin/sh "$0" "$@"
+  # macOS has lockf, Linux has flock. Both exit 75 when the lock is held.
+  if command -v lockf >/dev/null 2>&1; then
+    REX_UNDO_LOCKED=1 exec lockf -s -t 0 "$state/watcher.lock" /bin/sh "$0" "$@"
+  fi
+  REX_UNDO_LOCKED=1 exec flock -n -E 75 "$state/watcher.lock" /bin/sh "$0" "$@"
 fi
 # For uninstall.sh, which stops this process by its pid.
 echo $$ >"$pidfile"
