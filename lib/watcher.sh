@@ -1,6 +1,15 @@
 # Stopping and checking the watcher supervisor (bin/rex-undo-watch), for
 # install.sh and uninstall.sh. Each takes the state folder.
 
+# True if no process holds the lock file $1. macOS has lockf, Linux has flock.
+watcher_lock_free() {
+  if command -v lockf >/dev/null 2>&1; then
+    lockf -s -t 0 "$1" true 2>/dev/null
+  else
+    flock -n "$1" true 2>/dev/null
+  fi
+}
+
 # Stops the running supervisor and the `rex do` it runs, and waits until its
 # lock is free so the next copy can start. Returns 1 if none was running.
 watcher_stop() {
@@ -12,7 +21,7 @@ watcher_stop() {
   kill "$ws_pid" 2>/dev/null || true
   pkill -P "$ws_pid" 2>/dev/null || true
   ws_i=0
-  until lockf -s -t 0 "$1/watcher.lock" true 2>/dev/null || [ "$ws_i" -ge 30 ]; do
+  until watcher_lock_free "$1/watcher.lock" || [ "$ws_i" -ge 30 ]; do
     sleep 0.1
     ws_i=$((ws_i + 1))
   done

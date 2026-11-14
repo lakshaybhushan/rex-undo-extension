@@ -2,6 +2,8 @@
 # Prints a process's argv, NUL-separated. `ps` joins argv with spaces, which
 # loses quoting; the kernel's KERN_PROCARGS2 keeps each word. macOS only.
 use strict;
+# The syscall number below means something else on every other system.
+$^O eq "darwin" or exit 1;
 my $pid = shift;
 $pid =~ /^\d+$/ or exit 1;
 my $len = 262144; my $buf = "\0" x $len; my $lenp = pack("Q", $len);

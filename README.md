@@ -13,9 +13,11 @@ and sessions with every tab.
 
 ## Install
 
-rex-undo runs on macOS only. It needs Rex, and `jq` for the Claude hook:
+rex-undo runs on macOS and Linux. It needs Rex, and `jq` for the Claude hook:
 
 - Rex. `install.sh` looks for the `rex` CLI on `PATH`, then inside the app bundle.
+- `flock`, on Linux only. It comes with util-linux, which every common distribution
+  installs.
 - `jq`, optional. Without it, the install skips the Claude hook and Claude panes reopen
   with `--continue` instead of the exact conversation.
 

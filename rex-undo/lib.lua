@@ -97,6 +97,21 @@ end
 -- read, change, and write the stack, so each change holds a lock, or one
 -- process's write would drop the other's entry. mkdir is atomic.
 M.lock_path = M.state_dir .. "/stack.lock"
+
+-- When a file last changed, in seconds, or nil if it's gone. GNU stat (Linux)
+-- and BSD stat (macOS) take different flags, so keep the pair that worked.
+local stat_flags
+local function mtime(path)
+  for _, flags in ipairs(stat_flags and { stat_flags } or { { "-f", "%m" }, { "-c", "%Y" } }) do
+    local r = rex.exec({ "stat", flags[1], flags[2], path })
+    local t = r and r.ok and tonumber(r.stdout:match("^%d+"))
+    if t then
+      stat_flags = flags
+      return t
+    end
+  end
+end
+
 function M.locked(fn)
   local deadline, made = os.time() + 10, false
   while true do
@@ -117,7 +132,8 @@ function M.locked(fn)
     -- shortcut: a holder stalled for over 5s (the Mac slept mid-write) loses
     -- its lock, and two waiters on one stale lock can both get in. Both need a
     -- rare stall or crash first; a kernel lock (lockf) would close them.
-    rex.exec({ "find", M.lock_path, "-maxdepth", "0", "-mtime", "+5s", "-exec", "rmdir", M.lock_path, ";" })
+    local made_at = mtime(M.lock_path)
+    if made_at and os.time() - made_at > 5 then rex.exec({ "rmdir", M.lock_path }) end
     rex.exec({ "sleep", "0.02" })
   end
   local ok, value = pcall(fn)

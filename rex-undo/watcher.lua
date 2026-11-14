@@ -140,11 +140,30 @@ local function claude_record(block_id, pid)
   return rec
 end
 
+-- Linux keeps each process's argv in /proc. macOS has no /proc, so there the
+-- helper in bin asks the kernel.
+local PROCFS = lib.exists("/proc/self/cmdline")
+
+-- A process's argv, NUL between the words, or "" if it can't be read.
+local function argv_bytes(pid)
+  if not PROCFS then
+    local r = rex.exec({ "perl", DIR .. "/../bin/rex-undo-argv", tostring(pid) }, { timeout = 3 })
+    return (r and r.ok and r.stdout) or ""
+  end
+  local f = io.open("/proc/" .. tostring(pid) .. "/cmdline", "r")
+  if not f then return "" end
+  local s = f:read("*a") or ""
+  f:close()
+  -- /proc ends every word with a NUL, the last one too.
+  if s:sub(-1) == "\0" then s = s:sub(1, -2) end
+  return s
+end
+
 -- The command line, quoted again so it reruns with the same words.
 local function command_line(pid)
-  local r = rex.exec({ "perl", DIR .. "/../bin/rex-undo-argv", tostring(pid) }, { timeout = 3 })
-  if r and r.ok and r.stdout ~= "" then
-    local raw, s, i = {}, r.stdout .. "\0", 1
+  local bytes = argv_bytes(pid)
+  if bytes ~= "" then
+    local raw, s, i = {}, bytes .. "\0", 1
     while i <= #s do
       local j = s:find("\0", i, true)
       raw[#raw + 1] = s:sub(i, j - 1)
@@ -173,8 +192,8 @@ local function command_line(pid)
     end
     return table.concat(words, " ")
   end
-  -- Loses quoting, but better than nothing if perl can't read it.
-  r = rex.exec({ "ps", "-o", "args=", "-p", tostring(pid) }, { timeout = 3 })
+  -- Loses quoting, but better than nothing if argv can't be read.
+  local r = rex.exec({ "ps", "-o", "args=", "-p", tostring(pid) }, { timeout = 3 })
   if r and r.ok then return (r.stdout:gsub("%s+$", "")) end
 end
 
