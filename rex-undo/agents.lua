@@ -29,9 +29,9 @@ return {
   },
   {
     names = { "fx" }, apps = { "fx" }, confirm = true,
-    -- -r opens a picker and takes no ID. --resume-ID can't mistake an ID that
+    -- -r opens a picker and takes no ID. --resume=ID can't mistake an ID that
     -- starts with "-" for a flag.
-    resume = "fx --resume-{id}", continue = "fx -c",
+    resume = "fx --resume={id}", continue = "fx -c",
     files = { "/%.fx/sessions/v2/([%w_%-]+)/log%.jsonl$" },
   },
   {

@@ -6,7 +6,7 @@ with whatever was running in it. Press `cmd+shift+t`.
 - A shell comes back in the same folder.
 - A command comes back running, with the command line it was started with.
 - An agent comes back in the same conversation: `claude --resume ID`, `codex resume ID`,
-  `fx --resume-ID`, and 19 others listed in [`rex-undo/agents.lua`](rex-undo/agents.lua).
+  `fx --resume=ID`, and 19 others listed in [`rex-undo/agents.lua`](rex-undo/agents.lua).
 
 Panes return to the same side of the same split, tabs to the same place in the tab bar,
 and sessions with every tab.
