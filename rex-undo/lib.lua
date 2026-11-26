@@ -95,33 +95,47 @@ end
 
 -- The undo action (in the server) and the watcher (its own process) both
 -- read, change, and write the stack, so each change holds a lock, or one
--- process's write would drop the other's entry. mkdir is atomic.
-M.lock_path = M.state_dir .. "/stack.lock"
+-- process's write would drop the other's entry. Keep the lockfile on the
+-- same inode and let the kernel release the lock when the helper exits.
+M.lock_path = M.state_dir .. "/stack.lockfile"
+local hold_lock = 'printf ready >"$1" || exit 1; IFS= read -r unused || :'
+
 function M.locked(fn)
-  local deadline, made = os.time() + 10, false
-  while true do
-    local r = rex.exec({ "mkdir", M.lock_path })
-    if r and r.ok then break end
-    -- The folder may not exist yet (first use, or after uninstall). Checking
-    -- only here saves a process start on every change.
-    if not made then
-      made = true
-      M.ensure_dirs()
-      r = rex.exec({ "mkdir", M.lock_path })
-      if r and r.ok then break end
-    end
-    if os.time() > deadline then error("rex-undo: " .. M.lock_path .. " is busy", 0) end
-    -- A holder takes milliseconds, so a lock older than 5s was left by one
-    -- that died. Remove it and try again; never run without the lock, and
-    -- never remove a lock that's in use.
-    -- shortcut: a holder stalled for over 5s (the Mac slept mid-write) loses
-    -- its lock, and two waiters on one stale lock can both get in. Both need a
-    -- rare stall or crash first; a kernel lock (lockf) would close them.
-    rex.exec({ "find", M.lock_path, "-maxdepth", "0", "-mtime", "+5s", "-exec", "rmdir", M.lock_path, ";" })
-    rex.exec({ "sleep", "0.02" })
+  if not M.exists(M.state_dir) then M.ensure_dirs() end
+  local ready_path = os.tmpname()
+  local handle, err = rex.exec.start({
+    "/usr/bin/lockf", "-k", "-t", "10", M.lock_path,
+    "/bin/sh", "-c", hold_lock, "rex-undo-lock", ready_path,
+  }, { stdin = true, stdout = false })
+  if not handle then
+    os.remove(ready_path)
+    error("rex-undo: couldn't start stack lock: " .. tostring(err), 0)
   end
+
+  -- The helper acknowledges acquisition before waiting for EOF on its pipe.
+  -- Closing the pipe or losing the Rex process releases the kernel lock.
+  local acquired, result
+  local deadline = os.time() + 11
+  repeat
+    local ready = io.open(ready_path, "r")
+    if ready then
+      acquired = ready:read("*a") == "ready"
+      ready:close()
+      if acquired then break end
+    end
+    result = handle:wait(0.02)
+  until result or os.time() >= deadline
+  if not acquired then
+    handle:close_stdin()
+    if not result then result = handle:wait(1) end
+    os.remove(ready_path)
+    error("rex-undo: couldn't acquire stack lock: " ..
+      (result and result.stderr:gsub("%s+$", "") or "timed out"), 0)
+  end
+  os.remove(ready_path)
   local ok, value = pcall(fn)
-  rex.exec({ "rmdir", M.lock_path })
+  handle:close_stdin()
+  handle:wait()
   if not ok then error(value, 0) end
   return value
 end

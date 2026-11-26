@@ -288,21 +288,6 @@ test("two processes pushing at once lose nothing", function()
   assert(n == 80, "expected 80 entries, got " .. n)
 end)
 
-test("a lock in use is waited for, and a stale one is taken over", function()
-  lib.ensure_dirs()
-  local push = string.format("luajit %s/tests/push_many.lua %s x 1", root, root)
-  os.execute("mkdir " .. lib.lock_path)
-  -- Held for longer than the old ~4s takeover, and kept fresh so it isn't stale.
-  os.execute("(" .. push .. " &) ; for i in 1 2 3 4 5 6; do sleep 1; touch " .. lib.lock_path .. "; done")
-  assert(#lib.read_stack() == 0, "pushed without the lock")
-  assert(lib.exists(lib.lock_path), "removed a lock in use")
-  os.execute("rmdir " .. lib.lock_path .. "; sleep 1")
-  assert(#lib.read_stack() == 1, "didn't push once the lock was free")
-  os.execute("mkdir " .. lib.lock_path .. " && touch -t 202001010000 " .. lib.lock_path)
-  os.execute(push)
-  assert(#lib.read_stack() == 2, "a stale lock blocked the push")
-end)
-
 test("a short write keeps the history", function()
   for i = 1, 30 do lib.push({ kind = "panes", summary = string.rep("x", 200) .. i }) end
   -- A 2 KB file-size limit stands in for a full disk.

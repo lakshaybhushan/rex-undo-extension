@@ -19,7 +19,18 @@ rex = {
       return assert(loadstring("return " .. s))()
     end,
   },
-  exec = setmetatable({ start = function() return {} end }, { __call = function(_, argv)
+  exec = setmetatable({ start = function(argv, opts)
+    if not (opts and opts.stdin) then return {} end
+    local cmd = {}
+    for i, a in ipairs(argv) do cmd[i] = q(a) end
+    local pipe = assert(io.popen(table.concat(cmd, " "), "w"))
+    return {
+      close_stdin = function() pipe:close() end,
+      wait = function(_, seconds)
+        if seconds then rex.exec({ "sleep", tostring(seconds) }) end
+      end,
+    }
+  end }, { __call = function(_, argv)
     local cmd = {}
     for i, a in ipairs(argv) do cmd[i] = q(a) end
     local p = io.popen(table.concat(cmd, " ") .. " 2>/dev/null; echo \"__rc=$?\"")
